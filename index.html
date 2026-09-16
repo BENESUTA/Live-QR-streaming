@@ -202,6 +202,7 @@
         <div>受信速度: <span id="recv-kbps" class="stat-value">-</span></div>
         <div>取りこぼしフレーム: <span id="recv-dropped" class="stat-value">0</span></div>
         <div>完成フレーム数: <span id="recv-completed" class="stat-value">0</span></div>
+        <div>破損フレーム: <span id="recv-corrupted" class="stat-value">0</span></div>
         <div>現在のチャンク: <span id="recv-chunk-progress" class="stat-value">-</span></div>
       </div>
       <div class="status-line" id="recv-status">カメラを起動して、送信側のQRコードを映してください。</div>
@@ -12429,7 +12430,11 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     mid:  { width: 96,  quality: 0.45, maxChunkBytes: 350 },
     high: { width: 128, quality: 0.55, maxChunkBytes: 500 }
   };
-  var CAPTURE_INTERVAL_MS = 350;
+  var CAPTURE_INTERVAL_MS_MIN = 350;
+  // チャンク数が多いフレームほど、受信側が全チャンクを最低でも2周分は
+  // 見られるだけの表示時間を確保してから次のフレームへ進む(でないと
+  // 「全チャンクを受信し終える前に次のフレームに切り替わってしまい、
+  //  永久に完成しない」という事象が起きやすくなるため)。
 
   var send = {
     stream: null, videoTrack: null,
@@ -12478,10 +12483,24 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     return QUALITY_PRESETS[$('send-quality').value] || QUALITY_PRESETS.mid;
   }
 
+  // 次のキャプチャまでの待ち時間を、直前フレームのチャンク数から動的に決める。
+  // 「表示が最低2周するのに必要な時間」を確保することで、受信側がチャンクを
+  // 揃えきる前にフレームが切り替わってしまう(=いつまでも完成しない)事象を防ぐ。
+  function computeCaptureIntervalMs(chunkCount) {
+    var perChunkMs = rateIntervalMs();
+    return Math.max(CAPTURE_INTERVAL_MS_MIN, chunkCount * perChunkMs * 2);
+  }
+
+  function scheduleCapture(delayMs) {
+    if (!send.broadcasting) return;
+    send.captureTimer = setTimeout(captureFrame, delayMs);
+  }
+
   function captureFrame() {
-    if (send.capturing) return;
+    if (send.capturing) { scheduleCapture(CAPTURE_INTERVAL_MS_MIN); return; }
+    if (!send.broadcasting) return;
     var video = $('send-video');
-    if (!video || !video.videoWidth) return;
+    if (!video || !video.videoWidth) { scheduleCapture(CAPTURE_INTERVAL_MS_MIN); return; }
     var preset = currentPreset();
     var vw = video.videoWidth, vh = video.videoHeight;
     var scale = preset.width / Math.max(vw, vh);
@@ -12507,6 +12526,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
         send.renderTimestamps.push(now);
         send.throughputSamples.push({ t: now, bytes: bytes.length });
         updateSendStats(bytes.length, chunks.length);
+        scheduleCapture(computeCaptureIntervalMs(chunks.length));
       });
     }, 'image/jpeg', preset.quality);
   }
@@ -12532,9 +12552,8 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     send.totalFrames = 0;
     send.renderTimestamps = [];
     send.throughputSamples = [];
-    send.captureTimer = setInterval(captureFrame, CAPTURE_INTERVAL_MS);
     send.displayTimer = setInterval(displayTick, rateIntervalMs());
-    captureFrame();
+    captureFrame(); // 以降は captureFrame 自身が scheduleCapture() で次回を予約する
     $('send-start-btn').disabled = true;
     $('send-stop-btn').disabled = false;
     $('send-badge').textContent = '配信中';
@@ -12545,7 +12564,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
 
   function stopBroadcast() {
     send.broadcasting = false;
-    if (send.captureTimer) { clearInterval(send.captureTimer); send.captureTimer = null; }
+    if (send.captureTimer) { clearTimeout(send.captureTimer); send.captureTimer = null; }
     if (send.displayTimer) { clearInterval(send.displayTimer); send.displayTimer = null; }
     if (send.statsTimer) { clearInterval(send.statsTimer); send.statsTimer = null; }
     send.currentChunks = [];
@@ -12582,14 +12601,14 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     stream: null, videoTrack: null,
     scanning: false, rafId: null,
     activeFrameId: null, activeChunks: null, activeChunkCount: 0, activeDone: false,
-    droppedFrames: 0, completedFrames: 0,
+    droppedFrames: 0, completedFrames: 0, corruptedFrames: 0,
     throughputSamples: [], frameTimestamps: [],
     scanCanvas: document.createElement('canvas')
   };
 
   async function startRecvCamera() {
     if (recv.stream) return;
-    recv.droppedFrames = 0; recv.completedFrames = 0;
+    recv.droppedFrames = 0; recv.completedFrames = 0; recv.corruptedFrames = 0;
     recv.activeFrameId = null; recv.activeChunks = null; recv.activeChunkCount = 0; recv.activeDone = false;
     recv.throughputSamples = []; recv.frameTimestamps = [];
     updateRecvStatsUI();
@@ -12681,7 +12700,9 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
   }
 
   function handleChunk(chunk) {
-    if (chunk.frameId !== recv.activeFrameId) {
+    // frameIdが変わった場合はもちろん、同じfreameIdでもchunkCountの申告が食い違う
+    // チャンクが来た場合は「別物」とみなしてリセットする(誤検出/破損対策)。
+    if (chunk.frameId !== recv.activeFrameId || chunk.chunkCount !== recv.activeChunkCount) {
       if (recv.activeFrameId !== null && !recv.activeDone) recv.droppedFrames++;
       recv.activeFrameId = chunk.frameId;
       recv.activeChunks = new Map();
@@ -12689,12 +12710,13 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       recv.activeDone = false;
     }
     if (recv.activeDone) return;
-    if (chunk.chunkIndex >= 0 && chunk.chunkIndex < recv.activeChunkCount && !recv.activeChunks.has(chunk.chunkIndex)) {
+    if (chunk.chunkIndex < recv.activeChunkCount && !recv.activeChunks.has(chunk.chunkIndex)) {
       recv.activeChunks.set(chunk.chunkIndex, chunk.payload);
       recv.throughputSamples.push({ t: performance.now(), bytes: chunk.payload.length });
       if (recv.activeChunks.size === recv.activeChunkCount) {
-        recv.activeDone = true;
-        finalizeFrame();
+        // finalizeFrame() が false を返した場合(理論上まず起きないはずの
+        // 取りこぼし)は activeDone を立てず、追加のチャンクを待ち続ける。
+        recv.activeDone = finalizeFrame();
       }
     }
     updateProgressUI();
@@ -12704,11 +12726,24 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     var parts = [];
     for (var i = 0; i < recv.activeChunkCount; i++) {
       var p = recv.activeChunks.get(i);
-      if (!p) return; // 念のための安全確認(通常発生しない)
+      if (!p) return false; // 念のための安全確認(通常発生しない)
       parts.push(p);
     }
     var merged = P.concatArrays(parts);
+    // JPEGのSOIマーカー(FF D8)が無い場合は、誤検出/破損データとみなし
+    // 画像化を試みずにこのフレームを諦める(=次のフレームへ進む)。
+    if (merged.length < 4 || merged[0] !== 0xFF || merged[1] !== 0xD8) {
+      reportCorruptedFrame('受信データの先頭が不正でした(誤検出または破損の可能性)');
+      return true;
+    }
     renderFrame(merged);
+    return true;
+  }
+
+  function reportCorruptedFrame(reason) {
+    recv.corruptedFrames++;
+    $('recv-corrupted').textContent = String(recv.corruptedFrames);
+    $('recv-status').textContent = '1フレームを破棄しました(' + reason + ')。合計 ' + recv.corruptedFrames + ' 回。';
   }
 
   function renderFrame(bytes) {
@@ -12727,7 +12762,10 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       recv.frameTimestamps.push(performance.now());
       $('recv-completed').textContent = String(recv.completedFrames);
     };
-    img.onerror = function () { URL.revokeObjectURL(url); };
+    img.onerror = function () {
+      URL.revokeObjectURL(url);
+      reportCorruptedFrame('画像として読み込めませんでした');
+    };
     img.src = url;
   }
 
@@ -12741,6 +12779,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
   function updateRecvStatsUI() {
     $('recv-dropped').textContent = String(recv.droppedFrames);
     $('recv-completed').textContent = String(recv.completedFrames);
+    $('recv-corrupted').textContent = String(recv.corruptedFrames);
     $('recv-chunk-progress').textContent = '-';
   }
 
