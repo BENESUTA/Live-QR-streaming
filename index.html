@@ -221,6 +221,14 @@
             <option value="H">H(約30%復元・高耐性)</option>
           </select>
         </div>
+        <div class="field">
+          <label for="send-format">画像形式</label>
+          <select id="send-format">
+            <option value="auto" selected>自動(対応していればWebP優先)</option>
+            <option value="webp">WebP(高圧縮)</option>
+            <option value="jpeg">JPEG(互換性重視)</option>
+          </select>
+        </div>
       </div>
       <div class="field">
         <label>JPEG画質: <span id="send-jpeg-quality-value" class="slider-value">50%</span></label>
@@ -229,6 +237,11 @@
       <div class="field">
         <label for="send-qr-version">QRコードのバージョン上限(1〜40。値が大きいほど1コマの容量が増えますが、複雑になり読み取りづらくなります)</label>
         <select id="send-qr-version"></select>
+      </div>
+      <div class="field">
+        <label>ストリーミングfps(新しい映像フレームを取り込む頻度): <span id="send-stream-fps-value" class="slider-value">3 fps</span></label>
+        <input type="range" id="send-stream-fps" min="1" max="30" step="1" value="3">
+        <div class="cam-hint" style="margin-top:4px;">チャンク数が多い場合は、下のQR切替速度で全チャンクを表示しきるのに必要な時間が優先され、実際の更新間隔はここで指定した値より長くなることがあります。</div>
       </div>
       <div class="field">
         <label>QRコード切替速度: <span id="send-rate-value" class="slider-value">8 fps</span></label>
@@ -257,6 +270,7 @@
         <div>総フレーム数: <span id="send-total-frames" class="stat-value">0</span></div>
         <div>QRバージョン(実測): <span id="send-qr-actual-version" class="stat-value">-</span></div>
         <div>1チャンク最大バイト数: <span id="send-max-bytes" class="stat-value">-</span></div>
+        <div>使用画像形式: <span id="send-format-used" class="stat-value">-</span></div>
       </div>
       <div class="status-line" id="send-status">カメラを起動してください。</div>
     </div>
@@ -12967,7 +12981,18 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
   /* ------------------------------------------------------------------ */
   /* 送信側(カメラ映像 -> QRストリーム)                                 */
   /* ------------------------------------------------------------------ */
-  var CAPTURE_INTERVAL_MS_MIN = 200;
+  var CAPTURE_INTERVAL_MS_FLOOR = 34; // 30fps相当を上限とする安全下限(ブラウザ負荷対策)
+
+  // このブラウザがcanvasからWebPを実際にエンコードできるかどうかを一度だけ判定する。
+  // 一部の環境ではtoBlob/toDataURLに未対応形式を渡すと黙ってPNGにフォールバックするため、
+  // 返ってきたdata URLの先頭を見て本当にWebPになっているかを確認する。
+  var webpSupported = (function () {
+    try {
+      var c = document.createElement('canvas');
+      c.width = c.height = 1;
+      return c.toDataURL('image/webp', 0.5).indexOf('data:image/webp') === 0;
+    } catch (e) { return false; }
+  })();
 
   var send = {
     stream: null, videoTrack: null,
@@ -13015,11 +13040,14 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
   }
 
   function sendQualitySettings() {
+    var formatChoice = $('send-format').value || 'auto';
+    var useWebp = formatChoice === 'webp' || (formatChoice === 'auto' && webpSupported);
     return {
       width: parseInt($('send-resolution').value, 10) || 96,
       quality: (parseInt($('send-jpeg-quality').value, 10) || 50) / 100,
       ecLevel: $('send-ec').value || 'M',
-      versionCap: parseInt($('send-qr-version').value, 10) || 0 // 0 = 自動
+      versionCap: parseInt($('send-qr-version').value, 10) || 0, // 0 = 自動
+      mimeType: useWebp ? 'image/webp' : 'image/jpeg'
     };
   }
 
@@ -13035,9 +13063,16 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
     return Math.max(Math.round(1000 / 60), Math.round(1000 / rate));
   }
 
+  function streamFpsIntervalMs() {
+    var fps = parseInt($('send-stream-fps').value, 10) || 3;
+    return Math.max(CAPTURE_INTERVAL_MS_FLOOR, Math.round(1000 / fps));
+  }
+
   function computeCaptureIntervalMs(chunkCount) {
     var perChunkMs = rateIntervalMs();
-    return Math.max(CAPTURE_INTERVAL_MS_MIN, chunkCount * perChunkMs * 2);
+    // ユーザーが指定した「ストリーミングfps」を基本間隔としつつ、チャンク数が多い場合は
+    // 受信側が全チャンクを最低2周分は見られるだけの時間を優先して延長する。
+    return Math.max(streamFpsIntervalMs(), chunkCount * perChunkMs * 2);
   }
 
   function scheduleCapture(delayMs) {
@@ -13046,10 +13081,10 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
   }
 
   function captureFrame() {
-    if (send.capturing) { scheduleCapture(CAPTURE_INTERVAL_MS_MIN); return; }
+    if (send.capturing) { scheduleCapture(CAPTURE_INTERVAL_MS_FLOOR); return; }
     if (!send.broadcasting) return;
     var video = $('send-video');
-    if (!video || !video.videoWidth) { scheduleCapture(CAPTURE_INTERVAL_MS_MIN); return; }
+    if (!video || !video.videoWidth) { scheduleCapture(CAPTURE_INTERVAL_MS_FLOOR); return; }
     var q = sendQualitySettings();
     var vw = video.videoWidth, vh = video.videoHeight;
     var scale = q.width / Math.max(vw, vh);
@@ -13064,6 +13099,9 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
     cv.toBlob(function (blob) {
       send.capturing = false;
       if (!blob || !send.broadcasting) return;
+      // 環境によっては指定した形式(WebP等)に未対応で、黙って別形式(主にPNG)に
+      // フォールバックされることがある。実際に返ってきたMIMEタイプをそのまま使う。
+      var actualFormat = blob.type === 'image/webp' ? 'WebP' : (blob.type === 'image/jpeg' ? 'JPEG' : (blob.type || '不明'));
       blob.arrayBuffer().then(function (buf) {
         if (!send.broadcasting) return;
         var bytes = new Uint8Array(buf);
@@ -13075,10 +13113,10 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
         var now = performance.now();
         send.renderTimestamps.push(now);
         send.throughputSamples.push({ t: now, bytes: bytes.length });
-        updateSendStats(bytes.length, chunks.length, maxChunkBytes);
+        updateSendStats(bytes.length, chunks.length, maxChunkBytes, actualFormat);
         scheduleCapture(computeCaptureIntervalMs(chunks.length));
       });
-    }, 'image/jpeg', q.quality);
+    }, q.mimeType, q.quality);
   }
 
   function displayTick() {
@@ -13127,11 +13165,12 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
     $('send-status').textContent = '配信を停止しました。';
   }
 
-  function updateSendStats(frameBytes, chunkCount, maxChunkBytes) {
+  function updateSendStats(frameBytes, chunkCount, maxChunkBytes, actualFormat) {
     $('send-frame-size').textContent = formatBytes(frameBytes);
     $('send-chunk-count').textContent = chunkCount + ' 個';
     $('send-total-frames').textContent = String(send.totalFrames);
     $('send-max-bytes').textContent = maxChunkBytes + ' B';
+    if (actualFormat) $('send-format-used').textContent = actualFormat;
   }
 
   function refreshSendRateStats() {
@@ -13300,6 +13339,18 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
     updateProgressUI();
   }
 
+  // 先頭バイトから画像形式を判定する。JPEG(FF D8)またはWebP(RIFF....WEBP)以外は
+  // 誤検出/破損とみなす。戻り値は { mime } または null。
+  function detectImageFormat(bytes) {
+    if (bytes.length >= 3 && bytes[0] === 0xFF && bytes[1] === 0xD8) return { mime: 'image/jpeg' };
+    if (bytes.length >= 12 &&
+        bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 && // "RIFF"
+        bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50) { // "WEBP"
+      return { mime: 'image/webp' };
+    }
+    return null;
+  }
+
   function finalizeFrame() {
     var parts = [];
     for (var i = 0; i < recv.activeChunkCount; i++) {
@@ -13308,11 +13359,12 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
       parts.push(p);
     }
     var merged = P.concatArrays(parts);
-    if (merged.length < 4 || merged[0] !== 0xFF || merged[1] !== 0xD8) {
+    var format = detectImageFormat(merged);
+    if (!format) {
       reportCorruptedFrame('受信データの先頭が不正でした(誤検出または破損の可能性)');
       return true;
     }
-    renderFrame(merged);
+    renderFrame(merged, format.mime);
     return true;
   }
 
@@ -13322,8 +13374,8 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
     $('recv-status').textContent = '1フレームを破棄しました(' + reason + ')。合計 ' + recv.corruptedFrames + ' 回。';
   }
 
-  function renderFrame(bytes) {
-    var blob = new Blob([bytes], { type: 'image/jpeg' });
+  function renderFrame(bytes, mime) {
+    var blob = new Blob([bytes], { type: mime });
     var url = URL.createObjectURL(blob);
     var img = new Image();
     img.onload = function () {
@@ -13380,6 +13432,9 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
     $('send-rate').addEventListener('input', function () {
       $('send-rate-value').textContent = $('send-rate').value + ' fps';
       if (send.displayTimer) { clearInterval(send.displayTimer); send.displayTimer = setInterval(displayTick, rateIntervalMs()); }
+    });
+    $('send-stream-fps').addEventListener('input', function () {
+      $('send-stream-fps-value').textContent = $('send-stream-fps').value + ' fps';
     });
     $('send-jpeg-quality').addEventListener('input', function () {
       $('send-jpeg-quality-value').textContent = $('send-jpeg-quality').value + '%';
