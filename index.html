@@ -198,6 +198,8 @@
 
     <div class="card">
       <h2>配信設定(ストリーミング画質)</h2>
+      <button id="send-preset-videocall" class="btn btn-primary" style="margin-bottom:12px;">🎥 動画通話プリセットを適用(実測400kbps前提)</button>
+      <div class="cam-hint" style="margin-top:-6px;margin-bottom:10px;">解像度・QRバージョン・切替速度・音声を一括で高帯域向けに設定します。安定した実測スループットが得られる環境(据え置き・良好な照明)を前提とした設定です。下の各項目は個別に調整できます。</div>
       <div class="quality-grid">
         <div class="field">
           <label for="send-resolution">映像の解像度(長辺px)</label>
@@ -210,6 +212,8 @@
             <option value="160">160px(高精細)</option>
             <option value="192">192px(高精細・低速)</option>
             <option value="256">256px(最高精細・要注意)</option>
+            <option value="320">320px(動画通話向け・高帯域が必要)</option>
+            <option value="384">384px(動画通話向け・要高帯域)</option>
           </select>
         </div>
         <div class="field">
@@ -238,6 +242,7 @@
         <div class="field">
           <label for="send-keyframe-interval">キーフレーム間隔(動画コーデック)</label>
           <select id="send-keyframe-interval">
+            <option value="1">毎回(常にキーフレーム・高帯域向け)</option>
             <option value="5">5フレームごと(頑丈・低速)</option>
             <option value="10">10フレームごと</option>
             <option value="20" selected>20フレームごと(標準)</option>
@@ -255,8 +260,9 @@
       </div>
       <div class="cam-hint">動いていない部分は送信せず、変化した領域だけをQRに乗せる「差分(動画)コーデック」です。数フレームに1回、ずれ防止のためのキーフレーム(全体像)を送ります。</div>
       <div class="field" style="margin-top:10px;">
-        <label for="send-qr-version">QRコードのバージョン上限(1〜40。値が大きいほど1コマの容量が増えますが、複雑になり読み取りづらくなります)</label>
-        <select id="send-qr-version"></select>
+        <label for="send-qr-version">QRコードのバージョン: <span id="send-qr-version-value" class="slider-value">自動</span></label>
+        <input type="range" id="send-qr-version" min="0" max="40" step="1" value="0">
+        <div class="cam-hint" style="margin-top:4px;">0=自動(データ量に応じて必要最小のバージョンを選択)。1〜40を指定すると、そのバージョンの容量に収まるようチャンクサイズが調整されます。</div>
       </div>
       <div class="field">
         <label>ストリーミングfps(新しい映像フレームを取り込む頻度): <span id="send-stream-fps-value" class="slider-value">5 fps</span></label>
@@ -12854,13 +12860,10 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
     high: { width: 1920, height: 1080, scanMaxDim: 960 },
     ultra: { width: 2560, height: 1440, scanMaxDim: 1280 }
   };
-  var cameraSettings = {
-    send: { mode: 'auto', resolutionKey: 'medium', frameRate: 30, deviceId: '' },
-    recv: { mode: 'auto', resolutionKey: 'medium', frameRate: 30, deviceId: '' }
-  };
+  var cameraSettings = { mode: 'auto', resolutionKey: 'medium', frameRate: 30, deviceId: '' };
 
   function getCameraConstraints(prefix) {
-    var cs = cameraSettings[prefix];
+    var cs = cameraSettings;
     var base;
     if (cs.mode === 'manual') {
       var preset = RESOLUTION_PRESETS[cs.resolutionKey] || RESOLUTION_PRESETS.medium;
@@ -12869,23 +12872,28 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
       base = { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } };
     }
     if (cs.deviceId) base.deviceId = { exact: cs.deviceId };
-    else base.facingMode = { ideal: prefix === 'recv' ? 'environment' : 'user' };
+    else base.facingMode = { ideal: prefix === 'recv' ? 'environment' : 'user' }; // 明示的な機器選択が無い場合のみのヒント
     return base;
   }
-  function getScanMaxDim(prefix) {
-    var cs = cameraSettings[prefix];
-    if (cs.mode === 'manual') return (RESOLUTION_PRESETS[cs.resolutionKey] || RESOLUTION_PRESETS.medium).scanMaxDim;
+  function getScanMaxDim() {
+    if (cameraSettings.mode === 'manual') return (RESOLUTION_PRESETS[cameraSettings.resolutionKey] || RESOLUTION_PRESETS.medium).scanMaxDim;
     return 640;
   }
-  function syncCameraSettingsUI(prefix) {
-    var autoRadio = $(prefix + '-cam-mode-auto'), manualRadio = $(prefix + '-cam-mode-manual');
-    if (!autoRadio || !manualRadio) return;
-    var cs = cameraSettings[prefix];
-    autoRadio.checked = cs.mode === 'auto';
-    manualRadio.checked = cs.mode === 'manual';
-    $(prefix + '-cam-resolution').value = cs.resolutionKey;
-    $(prefix + '-cam-fps').value = String(cs.frameRate);
-    $(prefix + '-cam-manual-fields').style.display = cs.mode === 'manual' ? '' : 'none';
+  function syncCameraSettingsUI() {
+    ['send', 'recv'].forEach(function (prefix) {
+      var autoRadio = $(prefix + '-cam-mode-auto'), manualRadio = $(prefix + '-cam-mode-manual');
+      if (!autoRadio || !manualRadio) return;
+      autoRadio.checked = cameraSettings.mode === 'auto';
+      manualRadio.checked = cameraSettings.mode === 'manual';
+      $(prefix + '-cam-resolution').value = cameraSettings.resolutionKey;
+      $(prefix + '-cam-fps').value = String(cameraSettings.frameRate);
+      $(prefix + '-cam-manual-fields').style.display = cameraSettings.mode === 'manual' ? '' : 'none';
+      var camSelect = $(prefix + '-camera-select');
+      if (camSelect) {
+        var hasOption = Array.prototype.some.call(camSelect.options, function (o) { return o.value === cameraSettings.deviceId; });
+        camSelect.value = hasOption ? cameraSettings.deviceId : '';
+      }
+    });
   }
   async function refreshCameraDeviceList() {
     var devices;
@@ -12894,11 +12902,10 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
     ['send', 'recv'].forEach(function (prefix) {
       var sel = $(prefix + '-camera-select');
       if (!sel) return;
-      var prevValue = sel.value;
       sel.innerHTML = '';
       var autoOpt = document.createElement('option');
       autoOpt.value = '';
-      autoOpt.textContent = '自動選択(' + (prefix === 'recv' ? '背面' : '前面') + 'カメラ優先)';
+      autoOpt.textContent = '自動選択(送信=前面/受信=背面カメラ優先)';
       sel.appendChild(autoOpt);
       cams.forEach(function (cam, i) {
         var opt = document.createElement('option');
@@ -12906,33 +12913,32 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
         opt.textContent = cam.label || ('カメラ ' + (i + 1));
         sel.appendChild(opt);
       });
-      var target = cameraSettings[prefix].deviceId || prevValue || '';
-      var hasOption = Array.prototype.some.call(sel.options, function (o) { return o.value === target; });
-      sel.value = hasOption ? target : '';
+      var hasOption = Array.prototype.some.call(sel.options, function (o) { return o.value === cameraSettings.deviceId; });
+      sel.value = hasOption ? cameraSettings.deviceId : '';
     });
   }
-  function applyCameraSettingsChange(prefix) {
-    syncCameraSettingsUI(prefix);
-    if (prefix === 'send' && send.stream) { stopSendCamera(); startSendCamera(); }
-    if (prefix === 'recv' && recv.stream) { stopRecvCamera(); startRecvCamera(); }
+  function applyCameraSettingsChange() {
+    syncCameraSettingsUI();
+    if (send.stream) { stopSendCamera(); startSendCamera(); }
+    if (recv.stream) { stopRecvCamera(); startRecvCamera(); }
   }
   function initCameraSettingsUI() {
     ['send', 'recv'].forEach(function (prefix) {
       var autoRadio = $(prefix + '-cam-mode-auto'), manualRadio = $(prefix + '-cam-mode-manual');
       var resSelect = $(prefix + '-cam-resolution'), fpsSelect = $(prefix + '-cam-fps'), camSelect = $(prefix + '-camera-select');
       function onChange() {
-        cameraSettings[prefix].mode = manualRadio.checked ? 'manual' : 'auto';
-        cameraSettings[prefix].resolutionKey = resSelect.value;
-        cameraSettings[prefix].frameRate = parseInt(fpsSelect.value, 10);
-        applyCameraSettingsChange(prefix);
+        cameraSettings.mode = manualRadio.checked ? 'manual' : 'auto';
+        cameraSettings.resolutionKey = resSelect.value;
+        cameraSettings.frameRate = parseInt(fpsSelect.value, 10);
+        applyCameraSettingsChange();
       }
       autoRadio.addEventListener('change', onChange);
       manualRadio.addEventListener('change', onChange);
       resSelect.addEventListener('change', onChange);
       fpsSelect.addEventListener('change', onChange);
-      camSelect.addEventListener('change', function () { cameraSettings[prefix].deviceId = camSelect.value; applyCameraSettingsChange(prefix); });
-      syncCameraSettingsUI(prefix);
+      camSelect.addEventListener('change', function () { cameraSettings.deviceId = camSelect.value; applyCameraSettingsChange(); });
     });
+    syncCameraSettingsUI();
   }
 
   /* ---- 露出設定(ISO・シャッター速度・フォーカスなど、対応時のみ) ---- */
@@ -13210,7 +13216,10 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
   }
   function computeCaptureIntervalMs(chunkCount) {
     var perChunkMs = rateIntervalMs();
-    return Math.max(streamFpsIntervalMs(), chunkCount * perChunkMs * 2);
+    // 以前は「最低2周分」を安全マージンとして待つ保守的な設定だったが、これは低帯域を
+    // 前提にした過剰なマージンだった。実測スループットが十分安定している場合は1周分の
+    // 表示時間を確保すれば十分なので、ここを緩めて実効fpsを最大2倍まで引き上げる。
+    return Math.max(streamFpsIntervalMs(), chunkCount * perChunkMs);
   }
   function scheduleCapture(delayMs) {
     if (!send.broadcasting) return;
@@ -13255,7 +13264,10 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
     var currImageData = ctx.getImageData(0, 0, w, h);
 
     var isFirst = !send.prevImageData || send.prevImageData.width !== w || send.prevImageData.height !== h;
-    var keyframeDue = isFirst || send.framesSinceKeyframe >= q.keyframeInterval;
+    // keyframeInterval=1は「毎回キーフレーム」を意味する。framesSinceKeyframeは前回の
+    // キーフレーム以降に送った差分フレームの枚数なので、interval-1枚の差分を送ったら
+    // 次はキーフレームに戻す(オフバイワン注意: interval=1なら常にtrueになる)。
+    var keyframeDue = isFirst || send.framesSinceKeyframe >= q.keyframeInterval - 1;
     var box = null, areaRatio = 0;
     if (!keyframeDue) {
       box = diffBoundingBox(send.prevImageData.data, currImageData.data, w, h, q.diffThreshold);
@@ -13471,17 +13483,35 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
       $('send-audio-status').textContent = '無効';
     }
   }
-  function populateQrVersionSelect() {
-    var sel = $('send-qr-version');
-    var autoOpt = document.createElement('option');
-    autoOpt.value = '0'; autoOpt.textContent = '自動(データ量に応じて選択・最大40)';
-    sel.appendChild(autoOpt);
-    for (var v = 1; v <= 40; v++) {
-      var opt = document.createElement('option');
-      opt.value = String(v); opt.textContent = 'バージョン ' + v;
-      sel.appendChild(opt);
+  function initVersionSlider() {
+    var slider = $('send-qr-version'), label = $('send-qr-version-value');
+    slider.addEventListener('input', function () {
+      var v = parseInt(slider.value, 10);
+      label.textContent = v === 0 ? '自動' : ('v' + v);
+    });
+  }
+
+  // 実測400kbps程度の安定したスループットが得られている前提の高帯域プリセット。
+  // 解像度・QRバージョン・切替速度・音声を一括で「動画通話寄り」の値に設定する。
+  function applyVideoCallPreset() {
+    function setVal(id, val, evtName) {
+      var elx = $(id);
+      elx.value = String(val);
+      elx.dispatchEvent(new Event(evtName, { bubbles: false }));
     }
-    sel.value = '0';
+    setVal('send-resolution', 320, 'change');
+    setVal('send-jpeg-quality', 55, 'input');
+    setVal('send-ec', 'M', 'change');
+    setVal('send-format', 'auto', 'change');
+    setVal('send-qr-version', 36, 'input');
+    setVal('send-keyframe-interval', 1, 'change');
+    setVal('send-diff-sensitivity', 'mid', 'change');
+    setVal('send-rate', 20, 'input');
+    setVal('send-stream-fps', 20, 'input');
+    setVal('send-audio-quality', 8000, 'change');
+    var audioBox = $('send-audio-enable');
+    if (!audioBox.checked) { audioBox.checked = true; audioBox.dispatchEvent(new Event('change', { bubbles: false })); }
+    $('send-status').textContent = '動画通話プリセットを適用しました。実際の見え方は回線(光学)状況次第です。カメラを固定し明るい場所で試してください。';
   }
 
   /* ------------------------------------------------------------------ */
@@ -13771,7 +13801,7 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
   /* ------------------------------------------------------------------ */
   function init() {
     initTabs();
-    populateQrVersionSelect();
+    initVersionSlider();
     initCameraSettingsUI();
     initZxingWasm();
 
@@ -13793,6 +13823,7 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
         if (send.audioEnabled) startSendAudio(); else stopSendAudio();
       }
     });
+    $('send-preset-videocall').addEventListener('click', applyVideoCallPreset);
 
     $('recv-start-btn').addEventListener('click', startRecvCamera);
     $('recv-stop-btn').addEventListener('click', stopRecvCamera);
