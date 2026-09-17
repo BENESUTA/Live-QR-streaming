@@ -200,7 +200,16 @@
       <h2>配信設定(ストリーミング画質)</h2>
       <button id="send-preset-videocall" class="btn btn-primary" style="margin-bottom:12px;">🎥 動画通話プリセットを適用(実測400kbps前提)</button>
       <div class="cam-hint" style="margin-top:-6px;margin-bottom:10px;">解像度・QRバージョン・切替速度・音声を一括で高帯域向けに設定します。安定した実測スループットが得られる環境(据え置き・良好な照明)を前提とした設定です。下の各項目は個別に調整できます。</div>
-      <div class="quality-grid">
+      <div class="field">
+        <label for="send-codec-mode">コーデック方式</label>
+        <select id="send-codec-mode">
+          <option value="auto" selected>自動(対応していれば本格コーデックVP8+Opusを使用)</option>
+          <option value="webcodecs">VP8+Opus(本格コーデック・実際の動画/音声圧縮)</option>
+          <option value="compat">JPEG/WebP+ADPCM(互換モード・非対応ブラウザ向け)</option>
+        </select>
+        <div class="cam-hint" id="send-codec-support-note" style="margin-top:4px;"></div>
+      </div>
+      <div class="quality-grid" id="send-compat-fields">
         <div class="field">
           <label for="send-resolution">映像の解像度(長辺px)</label>
           <select id="send-resolution">
@@ -234,11 +243,27 @@
           </select>
         </div>
       </div>
-      <div class="field">
+      <div class="field" id="send-webcodecs-resolution-field" style="display:none;">
+        <label for="send-resolution-wc">映像の解像度(長辺px)</label>
+        <select id="send-resolution-wc">
+          <option value="96">96px</option>
+          <option value="128">128px</option>
+          <option value="160" selected>160px</option>
+          <option value="192">192px</option>
+          <option value="256">256px</option>
+          <option value="320">320px</option>
+          <option value="384">384px</option>
+        </select>
+      </div>
+      <div class="field" id="send-video-bitrate-field" style="display:none;">
+        <label>映像ビットレート: <span id="send-video-bitrate-value" class="slider-value">300 kbps</span></label>
+        <input type="range" id="send-video-bitrate" min="30" max="380" step="10" value="300">
+      </div>
+      <div class="field" id="send-jpeg-quality-field">
         <label>JPEG画質: <span id="send-jpeg-quality-value" class="slider-value">50%</span></label>
         <input type="range" id="send-jpeg-quality" min="10" max="95" step="5" value="50">
       </div>
-      <div class="quality-grid">
+      <div class="quality-grid" id="send-compat-fields-2">
         <div class="field">
           <label for="send-keyframe-interval">キーフレーム間隔(動画コーデック)</label>
           <select id="send-keyframe-interval">
@@ -258,7 +283,8 @@
           </select>
         </div>
       </div>
-      <div class="cam-hint">動いていない部分は送信せず、変化した領域だけをQRに乗せる「差分(動画)コーデック」です。数フレームに1回、ずれ防止のためのキーフレーム(全体像)を送ります。</div>
+      <div class="cam-hint" id="send-compat-hint">動いていない部分は送信せず、変化した領域だけをQRに乗せる「差分(動画)コーデック」です。数フレームに1回、ずれ防止のためのキーフレーム(全体像)を送ります。</div>
+      <div class="cam-hint" id="send-webcodecs-hint" style="display:none;">実際のVP8動画コーデックが、動き補償を含む本格的なフレーム間圧縮を行います。差分検出やキーフレーム間隔の指定は不要です(コーデックが自動的に判断します)。</div>
       <div class="field" style="margin-top:10px;">
         <label for="send-qr-version">QRコードのバージョン: <span id="send-qr-version-value" class="slider-value">自動</span></label>
         <input type="range" id="send-qr-version" min="0" max="40" step="1" value="0">
@@ -270,17 +296,12 @@
         <div class="cam-hint" style="margin-top:4px;">チャンク数が多い場合や音声が有効な場合は、実際の更新間隔がこの値より長くなることがあります。</div>
       </div>
       <div class="field" style="margin-top:10px;">
-        <label><input type="checkbox" id="send-audio-enable"> 音声を含める(実験的・帯域を大きく消費します)</label>
+        <label><input type="checkbox" id="send-audio-enable"> 音声を含める</label>
       </div>
       <div class="field" id="send-audio-quality-field" style="display:none;">
-        <label for="send-audio-quality">音声品質(サンプルレート)</label>
-        <select id="send-audio-quality">
-          <option value="3000">3000Hz(最低遅延・約13kbps)</option>
-          <option value="4000" selected>4000Hz(標準・約18kbps)</option>
-          <option value="6000">6000Hz(高音質・約26kbps)</option>
-          <option value="8000">8000Hz(電話品質・約35kbps)</option>
-        </select>
-        <div class="cam-hint">音声チャンクはQR表示枠を優先的に使うため、有効にすると映像の更新頻度が下がります。QRコード切替速度を上げると両立しやすくなります。</div>
+        <label for="send-audio-quality">音声品質</label>
+        <select id="send-audio-quality"></select>
+        <div class="cam-hint" id="send-audio-quality-hint">音声チャンクはQR表示枠を優先的に使うため、有効にすると映像の更新頻度が下がることがあります。</div>
       </div>
       <div class="field">
         <label>QRコード切替速度: <span id="send-rate-value" class="slider-value">8 fps</span></label>
@@ -394,8 +415,10 @@
         <div>完成フレーム数: <span id="recv-completed" class="stat-value">0</span></div>
         <div>破損フレーム: <span id="recv-corrupted" class="stat-value">0</span></div>
         <div>現在のチャンク: <span id="recv-chunk-progress" class="stat-value">-</span></div>
-        <div>デコード方式: <span id="recv-decoder" class="stat-value">-</span></div>
+        <div>デコード方式(QR): <span id="recv-decoder" class="stat-value">-</span></div>
+        <div>映像コーデック: <span id="recv-video-codec" class="stat-value">-</span></div>
         <div>直近フレーム種別: <span id="recv-frame-kind" class="stat-value">-</span></div>
+        <div>音声コーデック: <span id="recv-audio-codec" class="stat-value">-</span></div>
         <div>音声受信: <span id="recv-audio-status" class="stat-value">-</span></div>
       </div>
       <div class="status-line" id="recv-status">カメラを起動して、送信側のQRコードを映してください。</div>
@@ -12502,12 +12525,14 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
   'use strict';
   var P = root.QRStreamProtocol;
 
-  var FORMAT_JPEG = 0, FORMAT_WEBP = 1;
+  var FORMAT_JPEG = 0, FORMAT_WEBP = 1, FORMAT_CODEC = 2;
 
   function mimeToFormatByte(mime) { return mime === 'image/webp' ? FORMAT_WEBP : FORMAT_JPEG; }
   function formatByteToMime(b) { return b === FORMAT_WEBP ? 'image/webp' : 'image/jpeg'; }
 
-  // キーフレーム: [width:2][height:2][format:1][画像バイト列...]
+  // キーフレーム: [width:2][height:2][format:1][... format依存 ...]
+  //   format 0/1 (JPEG/WebP): 画像バイト列そのまま
+  //   format 2   (VP8等の本格コーデック): [descLen:2][description][エンコード済みバイト列]
   function packKeyframe(width, height, mime, imageBytes) {
     var out = new Uint8Array(5 + imageBytes.length);
     P.writeUint16LE(out, 0, width);
@@ -12516,14 +12541,27 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
     out.set(imageBytes, 5);
     return out;
   }
+  function packKeyframeCodec(width, height, description, codecBytes) {
+    var descLen = description.length;
+    var out = new Uint8Array(5 + 2 + descLen + codecBytes.length);
+    P.writeUint16LE(out, 0, width);
+    P.writeUint16LE(out, 2, height);
+    out[4] = FORMAT_CODEC;
+    P.writeUint16LE(out, 5, descLen);
+    out.set(description, 7);
+    out.set(codecBytes, 7 + descLen);
+    return out;
+  }
   function unpackKeyframe(bytes) {
     if (bytes.length < 5) return null;
-    return {
-      width: P.readUint16LE(bytes, 0),
-      height: P.readUint16LE(bytes, 2),
-      mime: formatByteToMime(bytes[4]),
-      imageBytes: bytes.slice(5)
-    };
+    var width = P.readUint16LE(bytes, 0), height = P.readUint16LE(bytes, 2), format = bytes[4];
+    if (format === FORMAT_CODEC) {
+      if (bytes.length < 7) return null;
+      var descLen = P.readUint16LE(bytes, 5);
+      if (bytes.length < 7 + descLen) return null;
+      return { width: width, height: height, format: format, description: bytes.slice(7, 7 + descLen), codecBytes: bytes.slice(7 + descLen) };
+    }
+    return { width: width, height: height, format: format, mime: formatByteToMime(format), imageBytes: bytes.slice(5) };
   }
 
   // 差分フレーム: [x:2][y:2][w:2][h:2][format:1][画像バイト列...] (キャンバス全体ではなく変化した矩形のみ)
@@ -12549,9 +12587,47 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
     };
   }
 
+  var AUDIO_CODEC_ADPCM = 0, AUDIO_CODEC_OPUS = 1;
+
+  // 音声チャンクの先頭に「どのコーデックで包まれているか」の識別バイトを置く。
+  // ADPCM: [0][rateCode:1][ADPCMバイト列...]
+  // Opus : [1][sampleRate:2][descLen:2][description][Opusパケットバイト列...] (WebCodecs, 本格コーデック)
+  function packAudioAdpcm(rateCode, adpcmBytes) {
+    var out = new Uint8Array(2 + adpcmBytes.length);
+    out[0] = AUDIO_CODEC_ADPCM;
+    out[1] = rateCode;
+    out.set(adpcmBytes, 2);
+    return out;
+  }
+  function packAudioOpus(sampleRate, description, opusBytes) {
+    var descLen = description.length;
+    var out = new Uint8Array(1 + 2 + 2 + descLen + opusBytes.length);
+    out[0] = AUDIO_CODEC_OPUS;
+    P.writeUint16LE(out, 1, sampleRate);
+    P.writeUint16LE(out, 3, descLen);
+    out.set(description, 5);
+    out.set(opusBytes, 5 + descLen);
+    return out;
+  }
+  function unpackAudioPayload(bytes) {
+    if (bytes.length < 2) return null;
+    var codec = bytes[0];
+    if (codec === AUDIO_CODEC_OPUS) {
+      if (bytes.length < 5) return null;
+      var sampleRate = P.readUint16LE(bytes, 1);
+      var descLen = P.readUint16LE(bytes, 3);
+      if (bytes.length < 5 + descLen) return null;
+      return { codec: codec, sampleRate: sampleRate, description: bytes.slice(5, 5 + descLen), opusBytes: bytes.slice(5 + descLen) };
+    }
+    return { codec: AUDIO_CODEC_ADPCM, rateCode: bytes[1], adpcmBytes: bytes.slice(2) };
+  }
+
   root.QRVideoCodec = {
-    packKeyframe: packKeyframe, unpackKeyframe: unpackKeyframe,
-    packDelta: packDelta, unpackDelta: unpackDelta
+    FORMAT_JPEG: FORMAT_JPEG, FORMAT_WEBP: FORMAT_WEBP, FORMAT_CODEC: FORMAT_CODEC,
+    AUDIO_CODEC_ADPCM: AUDIO_CODEC_ADPCM, AUDIO_CODEC_OPUS: AUDIO_CODEC_OPUS,
+    packKeyframe: packKeyframe, packKeyframeCodec: packKeyframeCodec, unpackKeyframe: unpackKeyframe,
+    packDelta: packDelta, unpackDelta: unpackDelta,
+    packAudioAdpcm: packAudioAdpcm, packAudioOpus: packAudioOpus, unpackAudioPayload: unpackAudioPayload
   };
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
@@ -13140,9 +13216,62 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
   var AUDIO_QUEUE_MAX = 6; // 音声の遅延を抑えるため、溜まりすぎたら古いものから捨てる
   var AUDIO_RATE_CODES = [3000, 4000, 6000, 8000];
 
+  var webCodecsVideoSupported = (typeof VideoEncoder !== 'undefined' && typeof VideoDecoder !== 'undefined');
+  var webCodecsAudioSupported = (typeof AudioEncoder !== 'undefined' && typeof AudioDecoder !== 'undefined');
+  var mediaStreamTrackProcessorSupported = (typeof MediaStreamTrackProcessor !== 'undefined');
+
   var webpSupported = (function () {
     try { var c = document.createElement('canvas'); c.width = c.height = 1; return c.toDataURL('image/webp', 0.5).indexOf('data:image/webp') === 0; } catch (e) { return false; }
   })();
+
+  function resolvedCodecMode() {
+    var choice = $('send-codec-mode').value;
+    if (choice === 'compat') return 'compat';
+    if (choice === 'webcodecs') return webCodecsVideoSupported ? 'webcodecs' : 'compat';
+    return webCodecsVideoSupported ? 'webcodecs' : 'compat'; // auto
+  }
+  function updateAudioQualityOptions() {
+    var mode = resolvedCodecMode();
+    var sel = $('send-audio-quality'), hint = $('send-audio-quality-hint');
+    var useOpus = mode === 'webcodecs' && webCodecsAudioSupported;
+    sel.innerHTML = '';
+    var options = useOpus
+      ? [[8000, '8kbps(最低遅延)'], [16000, '16kbps(標準)'], [24000, '24kbps(高音質)'], [32000, '32kbps(最高音質)']]
+      : [[3000, '3000Hz(最低遅延・約13kbps)'], [4000, '4000Hz(標準・約18kbps)'], [6000, '6000Hz(高音質・約26kbps)'], [8000, '8000Hz(電話品質・約35kbps)']];
+    options.forEach(function (pair) {
+      var opt = document.createElement('option');
+      opt.value = String(pair[0]); opt.textContent = pair[1];
+      sel.appendChild(opt);
+    });
+    sel.value = String(options[1][0]);
+    hint.textContent = useOpus
+      ? '実際のOpus音声コーデックで圧縮します(Zoom等と同じ音声コーデック)。'
+      : '音声チャンクはQR表示枠を優先的に使うため、有効にすると映像の更新頻度が下がることがあります。';
+  }
+  function updateCodecModeUI() {
+    var mode = resolvedCodecMode();
+    var choice = $('send-codec-mode').value;
+    var isWc = mode === 'webcodecs';
+    $('send-compat-fields').style.display = isWc ? 'none' : '';
+    $('send-jpeg-quality-field').style.display = isWc ? 'none' : '';
+    $('send-compat-fields-2').style.display = isWc ? 'none' : '';
+    $('send-compat-hint').style.display = isWc ? 'none' : '';
+    $('send-webcodecs-resolution-field').style.display = isWc ? '' : 'none';
+    $('send-video-bitrate-field').style.display = isWc ? '' : 'none';
+    $('send-webcodecs-hint').style.display = isWc ? '' : 'none';
+    var note = $('send-codec-support-note');
+    if (choice === 'webcodecs' && !webCodecsVideoSupported) {
+      note.textContent = 'このブラウザはVP8/Opusの本格コーデックに対応していないため、互換モード(JPEG/WebP)で動作します。';
+    } else if (choice === 'auto') {
+      note.textContent = webCodecsVideoSupported
+        ? '本格コーデック(VP8' + (webCodecsAudioSupported ? '+Opus' : '') + ')に対応しているため、自動的にそちらを使用します。'
+        : 'このブラウザは本格コーデックに未対応のため、互換モード(JPEG/WebP)で動作します。';
+    } else {
+      note.textContent = '';
+    }
+    updateAudioQualityOptions();
+    if (send.broadcasting && send.audioEnabled) { stopSendAudio(); startSendAudio(); }
+  }
 
   var send = {
     stream: null, videoTrack: null,
@@ -13156,7 +13285,10 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
     regionCanvas: document.createElement('canvas'),
     renderTimestamps: [], throughputSamples: [],
     totalFrames: 0, lastFrameKind: '-',
-    audioEnabled: false, audioCtx: null, audioStream: null, audioProcessor: null, audioGainZero: null,
+    videoEncoder: null, videoEncoderWidth: 0, videoEncoderHeight: 0, videoEncoderBitrate: 0, videoEncoderTs: 0,
+    audioEnabled: false, audioMode: 'adpcm',
+    audioCtx: null, audioStream: null, audioProcessor: null, audioGainZero: null,
+    audioEncoder: null, audioTrackReader: null, audioEncoderSampleRate: 48000, audioEncoderTs: 0,
     audioFrameId: 0, audioQueue: [], audioLeftover: new Float32Array(0), audioPcmAccum: [],
     audioBytesSent: 0, audioBytesTimestamps: []
   };
@@ -13189,16 +13321,22 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
   }
 
   function sendQualitySettings() {
+    var mode = resolvedCodecMode();
     var formatChoice = $('send-format').value || 'auto';
     var useWebp = formatChoice === 'webp' || (formatChoice === 'auto' && webpSupported);
+    var width = mode === 'webcodecs'
+      ? (parseInt($('send-resolution-wc').value, 10) || 160)
+      : (parseInt($('send-resolution').value, 10) || 96);
     return {
-      width: parseInt($('send-resolution').value, 10) || 96,
+      mode: mode,
+      width: width,
       quality: (parseInt($('send-jpeg-quality').value, 10) || 50) / 100,
       ecLevel: $('send-ec').value || 'M',
       versionCap: parseInt($('send-qr-version').value, 10) || 0,
       mimeType: useWebp ? 'image/webp' : 'image/jpeg',
       keyframeInterval: parseInt($('send-keyframe-interval').value, 10) || 20,
-      diffThreshold: DIFF_THRESHOLDS[$('send-diff-sensitivity').value] || DIFF_THRESHOLDS.mid
+      diffThreshold: DIFF_THRESHOLDS[$('send-diff-sensitivity').value] || DIFF_THRESHOLDS.mid,
+      videoBitrateBps: (parseInt($('send-video-bitrate').value, 10) || 300) * 1000
     };
   }
   function computeMaxChunkBytes(q) {
@@ -13213,17 +13351,6 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
   function streamFpsIntervalMs() {
     var fps = parseInt($('send-stream-fps').value, 10) || 5;
     return Math.max(CAPTURE_INTERVAL_MS_FLOOR, Math.round(1000 / fps));
-  }
-  function computeCaptureIntervalMs(chunkCount) {
-    var perChunkMs = rateIntervalMs();
-    // 以前は「最低2周分」を安全マージンとして待つ保守的な設定だったが、これは低帯域を
-    // 前提にした過剰なマージンだった。実測スループットが十分安定している場合は1周分の
-    // 表示時間を確保すれば十分なので、ここを緩めて実効fpsを最大2倍まで引き上げる。
-    return Math.max(streamFpsIntervalMs(), chunkCount * perChunkMs);
-  }
-  function scheduleCapture(delayMs) {
-    if (!send.broadcasting) return;
-    send.captureTimer = setTimeout(captureFrame, delayMs);
   }
 
   // 2枚のImageDataを比較し、有意な差がある画素のバウンディングボックスを返す(無ければnull)。
@@ -13247,12 +13374,22 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
     return { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
   }
 
+  // キャプチャは固定間隔のタイマー(setInterval)で駆動する。以前はエンコード完了後に
+  // 次回分を予約する自己スケジューリング方式だったため、JPEG/WebPのエンコード遅延や
+  // チャンク数に応じた安全マージンがそのまま実効fpsの頭打ちに直結してしまっていた。
+  // 今はタイマーは常に一定間隔で発火し、処理が間に合わなければそのタイミングは
+  // 単に諦める(dropする)方式にして、指定fpsに実際に近づけるようにしている。
   function captureFrame() {
-    if (send.capturing) { scheduleCapture(CAPTURE_INTERVAL_MS_FLOOR); return; }
     if (!send.broadcasting) return;
     var video = $('send-video');
-    if (!video || !video.videoWidth) { scheduleCapture(CAPTURE_INTERVAL_MS_FLOOR); return; }
+    if (!video || !video.videoWidth) return;
     var q = sendQualitySettings();
+    if (q.mode === 'webcodecs') captureFrameWebCodecs(q, video);
+    else captureFrameCompat(q, video);
+  }
+
+  function captureFrameCompat(q, video) {
+    if (send.capturing) return; // 前回のJPEG/WebPエンコードがまだ進行中ならこの回は諦める
     var vw = video.videoWidth, vh = video.videoHeight;
     var scale = q.width / Math.max(vw, vh);
     var w = Math.max(8, Math.round(vw * scale));
@@ -13273,14 +13410,8 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
       box = diffBoundingBox(send.prevImageData.data, currImageData.data, w, h, q.diffThreshold);
       if (box) areaRatio = (box.w * box.h) / (w * h);
     }
-
     send.prevImageData = currImageData;
-
-    if (!keyframeDue && !box) {
-      // 変化なし: 何も送らず帯域を節約する(表示側は直前のチャンクを回し続ける)
-      scheduleCapture(computeCaptureIntervalMs(send.videoChunks.length || 1));
-      return;
-    }
+    if (!keyframeDue && !box) return; // 変化なし: 何も送らず帯域を節約する
 
     var sendAsKeyframe = keyframeDue || areaRatio > LARGE_CHANGE_RATIO;
     send.capturing = true;
@@ -13319,17 +13450,88 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
         send.renderTimestamps.push(now);
         send.throughputSamples.push({ t: now, bytes: imageBytes.length });
         updateSendStats(imageBytes.length, chunks.length, maxChunkBytes, actualFormat);
-        scheduleCapture(computeCaptureIntervalMs(chunks.length));
       });
     }, q.mimeType, q.quality);
   }
 
-  /* ---- 音声キャプチャ(実験的): マイク -> ダウンサンプル -> ADPCM -> 送信キュー ---- */
+  /* ---- 本格コーデック(VP8)での映像キャプチャ ----
+     JPEG/WebPのような静止画の使い回しではなく、実際に動き補償を伴うフレーム間
+     圧縮を行うVP8エンコーダにそのまま映像フレームを渡す。差分検出やキーフレーム
+     間隔の管理はコーデック自身が内部で行うため、こちら側では不要になる。 */
+  function ensureVideoEncoder(width, height, bitrateBps, fps) {
+    if (send.videoEncoder && send.videoEncoderWidth === width && send.videoEncoderHeight === height && send.videoEncoderBitrate === bitrateBps) {
+      return send.videoEncoder;
+    }
+    if (send.videoEncoder) { try { send.videoEncoder.close(); } catch (e) { /* noop */ } }
+    var encoder = new VideoEncoder({
+      output: handleEncodedVideoChunk,
+      error: function (e) { console.error('VideoEncoder error:', e); }
+    });
+    encoder.configure({ codec: 'vp8', width: width, height: height, bitrate: bitrateBps, framerate: fps, latencyMode: 'realtime' });
+    send.videoEncoder = encoder;
+    send.videoEncoderWidth = width; send.videoEncoderHeight = height; send.videoEncoderBitrate = bitrateBps;
+    send.videoEncoderTs = 0;
+    return encoder;
+  }
+
+  function handleEncodedVideoChunk(chunk, metadata) {
+    if (!send.broadcasting) return;
+    var buf = new Uint8Array(chunk.byteLength);
+    chunk.copyTo(buf);
+    var q = sendQualitySettings();
+    var maxChunkBytes = computeMaxChunkBytes(q);
+    var payload, streamType;
+    if (chunk.type === 'key') {
+      var desc = new Uint8Array(0);
+      if (metadata && metadata.decoderConfig && metadata.decoderConfig.description) desc = new Uint8Array(metadata.decoderConfig.description);
+      payload = VC.packKeyframeCodec(send.videoEncoderWidth, send.videoEncoderHeight, desc, buf);
+      streamType = P.STREAM_VIDEO_KEY;
+    } else {
+      payload = buf; // 差分フレームはコーデックのバイト列をそのまま送る(独自ヘッダ不要)
+      streamType = P.STREAM_VIDEO_DELTA;
+    }
+    var chunks = P.splitIntoChunks(streamType, send.videoFrameId, payload, maxChunkBytes);
+    send.videoFrameId = (send.videoFrameId + 1) & 0xff;
+    send.videoChunks = chunks;
+    send.videoChunkIndex = 0;
+    send.totalFrames++;
+    send.lastFrameKind = (chunk.type === 'key' ? 'キーフレーム(VP8, ' : '差分(VP8, ') + send.videoEncoderWidth + '×' + send.videoEncoderHeight + ')';
+    var now = performance.now();
+    send.renderTimestamps.push(now);
+    send.throughputSamples.push({ t: now, bytes: buf.length });
+    updateSendStats(buf.length, chunks.length, maxChunkBytes, 'VP8');
+  }
+
+  function captureFrameWebCodecs(q, video) {
+    var vw = video.videoWidth, vh = video.videoHeight;
+    var scale = q.width / Math.max(vw, vh);
+    var w = Math.max(2, Math.round(vw * scale));
+    var h = Math.max(2, Math.round(vh * scale));
+    w -= w % 2; h -= h % 2; // VP8は偶数の幅・高さを要求する
+    if (w < 2) w = 2; if (h < 2) h = 2;
+    var cv = send.captureCanvas;
+    cv.width = w; cv.height = h;
+    cv.getContext('2d').drawImage(video, 0, 0, w, h);
+
+    var fps = parseInt($('send-stream-fps').value, 10) || 10;
+    var encoder = ensureVideoEncoder(w, h, q.videoBitrateBps, fps);
+    if (encoder.encodeQueueSize > 2) return; // エンコーダが詰まっている: このタイミングは諦めて遅延蓄積を防ぐ
+    send.videoEncoderTs += Math.round(1e6 / fps);
+    try {
+      var frame = new VideoFrame(cv, { timestamp: send.videoEncoderTs });
+      encoder.encode(frame);
+      frame.close();
+    } catch (e) { console.error('VideoFrame encode failed:', e); }
+  }
+
+  /* ---- 音声キャプチャ ----
+     本格コーデックモード(かつ対応ブラウザ)ではOpus(WebCodecs AudioEncoder)を、
+     それ以外では従来のIMA-ADPCMを使う。どちらも同じ送信キューに合流する。 */
   function currentAudioRateHz() { return parseInt($('send-audio-quality').value, 10) || 4000; }
   function hzToRateCode(hz) { var idx = AUDIO_RATE_CODES.indexOf(hz); return idx < 0 ? 1 : idx; }
 
   async function startSendAudio() {
-    if (send.audioCtx) return;
+    if (send.audioStream) return;
     try {
       send.audioStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
     } catch (err) {
@@ -13337,6 +13539,11 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
       $('send-audio-enable').checked = false;
       return;
     }
+    var mode = resolvedCodecMode();
+    send.audioMode = (mode === 'webcodecs' && webCodecsAudioSupported) ? 'opus' : 'adpcm';
+    if (send.audioMode === 'opus') startSendAudioOpus(); else startSendAudioAdpcm();
+  }
+  function startSendAudioAdpcm() {
     var Ctx = window.AudioContext || window.webkitAudioContext;
     send.audioCtx = new Ctx();
     var source = send.audioCtx.createMediaStreamSource(send.audioStream);
@@ -13350,9 +13557,68 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
     send.audioProcessor = processor;
     send.audioLeftover = new Float32Array(0);
     send.audioPcmAccum = [];
-    send.audioQueue = [];
+  }
+  function startSendAudioOpus() {
+    var track = send.audioStream.getAudioTracks()[0];
+    var settings = track.getSettings ? track.getSettings() : {};
+    var sampleRate = settings.sampleRate || 48000;
+    var bitrateBps = parseInt($('send-audio-quality').value, 10) || 16000;
+    var encoder = new AudioEncoder({
+      output: handleEncodedAudioChunk,
+      error: function (e) { console.error('AudioEncoder error:', e); }
+    });
+    try {
+      encoder.configure({ codec: 'opus', sampleRate: sampleRate, numberOfChannels: 1, bitrate: bitrateBps });
+    } catch (e) {
+      $('send-status').textContent = 'Opusエンコーダの初期化に失敗したため互換モードで音声を送ります。';
+      send.audioMode = 'adpcm';
+      startSendAudioAdpcm();
+      return;
+    }
+    send.audioEncoder = encoder;
+    send.audioEncoderSampleRate = sampleRate;
+    send.audioEncoderTs = 0;
+
+    if (mediaStreamTrackProcessorSupported) {
+      var processor = new MediaStreamTrackProcessor({ track: track });
+      var reader = processor.readable.getReader();
+      send.audioTrackReader = reader;
+      (function pump() {
+        reader.read().then(function (res) {
+          if (res.done || send.audioEncoder !== encoder) return;
+          var audioData = res.value;
+          try { if (send.audioEnabled && send.broadcasting) encoder.encode(audioData); } finally { audioData.close(); }
+          pump();
+        }).catch(function () { /* リーダーが閉じられた場合など */ });
+      })();
+    } else {
+      // MediaStreamTrackProcessor未対応環境向けフォールバック: ScriptProcessorNodeで
+      // 生PCMを取得し、AudioDataを手動で組み立ててエンコーダへ渡す。
+      var Ctx = window.AudioContext || window.webkitAudioContext;
+      send.audioCtx = new Ctx();
+      var source = send.audioCtx.createMediaStreamSource(send.audioStream);
+      var proc = send.audioCtx.createScriptProcessor(4096, 1, 1);
+      var gainZero = send.audioCtx.createGain(); gainZero.gain.value = 0;
+      proc.onaudioprocess = function (e) {
+        if (!send.audioEnabled || !send.broadcasting || send.audioEncoder !== encoder) return;
+        var input = e.inputBuffer.getChannelData(0);
+        var copy = new Float32Array(input.length);
+        copy.set(input);
+        var ts = send.audioEncoderTs;
+        send.audioEncoderTs += Math.round(copy.length / send.audioCtx.sampleRate * 1e6);
+        try {
+          var audioData = new AudioData({ format: 'f32-planar', sampleRate: send.audioCtx.sampleRate, numberOfFrames: copy.length, numberOfChannels: 1, timestamp: ts, data: copy });
+          encoder.encode(audioData);
+          audioData.close();
+        } catch (e2) { /* 個々のフレームの失敗は無視して継続する */ }
+      };
+      source.connect(proc); proc.connect(gainZero); gainZero.connect(send.audioCtx.destination);
+      send.audioProcessor = proc; send.audioGainZero = gainZero;
+    }
   }
   function stopSendAudio() {
+    if (send.audioTrackReader) { try { send.audioTrackReader.cancel(); } catch (e) { /* noop */ } send.audioTrackReader = null; }
+    if (send.audioEncoder) { try { send.audioEncoder.close(); } catch (e) { /* noop */ } send.audioEncoder = null; }
     if (send.audioProcessor) { send.audioProcessor.disconnect(); send.audioProcessor.onaudioprocess = null; send.audioProcessor = null; }
     if (send.audioGainZero) { send.audioGainZero.disconnect(); send.audioGainZero = null; }
     if (send.audioCtx) { send.audioCtx.close(); send.audioCtx = null; }
@@ -13362,7 +13628,7 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
   }
 
   function onAudioProcess(e) {
-    if (!send.broadcasting || !send.audioEnabled) return;
+    if (!send.broadcasting || !send.audioEnabled || send.audioMode !== 'adpcm') return;
     var input = e.inputBuffer.getChannelData(0);
     var nativeRate = send.audioCtx.sampleRate;
     var targetRate = currentAudioRateHz();
@@ -13397,15 +13663,27 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
     var initPred = samples[0];
     var initStepIdx = ADPCM.pickInitialStepIndex(samples, initPred);
     var adpcmBytes = ADPCM.encodeChunk(samples, initPred, initStepIdx);
-    var payload = new Uint8Array(1 + adpcmBytes.length);
-    payload[0] = hzToRateCode(rateHz);
-    payload.set(adpcmBytes, 1);
-    var chunkBytes = P.buildChunk(P.STREAM_AUDIO, send.audioFrameId, 0, 1, payload);
+    var payload = VC.packAudioAdpcm(hzToRateCode(rateHz), adpcmBytes);
+    enqueueAudioPayload(payload);
+  }
+  function handleEncodedAudioChunk(chunk, metadata) {
+    if (!send.broadcasting || !send.audioEnabled) return;
+    var buf = new Uint8Array(chunk.byteLength);
+    chunk.copyTo(buf);
+    var desc = new Uint8Array(0);
+    if (metadata && metadata.decoderConfig && metadata.decoderConfig.description) desc = new Uint8Array(metadata.decoderConfig.description);
+    var payload = VC.packAudioOpus(send.audioEncoderSampleRate, desc, buf);
+    enqueueAudioPayload(payload);
+  }
+  function enqueueAudioPayload(payload) {
+    var q = sendQualitySettings();
+    var maxChunkBytes = computeMaxChunkBytes(q);
+    var chunks = P.splitIntoChunks(P.STREAM_AUDIO, send.audioFrameId, payload, maxChunkBytes);
     send.audioFrameId = (send.audioFrameId + 1) & 0xff;
-    send.audioQueue.push(chunkBytes);
+    chunks.forEach(function (c) { send.audioQueue.push(c); });
     while (send.audioQueue.length > AUDIO_QUEUE_MAX) send.audioQueue.shift();
-    send.audioBytesSent += chunkBytes.length;
-    send.audioBytesTimestamps.push({ t: performance.now(), bytes: chunkBytes.length });
+    send.audioBytesSent += payload.length;
+    send.audioBytesTimestamps.push({ t: performance.now(), bytes: payload.length });
   }
 
   function displayTick() {
@@ -13436,7 +13714,8 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
     if (send.audioEnabled) startSendAudio();
 
     send.displayTimer = setInterval(displayTick, rateIntervalMs());
-    captureFrame();
+    send.captureTimer = setInterval(captureFrame, streamFpsIntervalMs());
+    captureFrame(); // 体感の初動を早くするため、最初の1枚はすぐに試す
     $('send-start-btn').disabled = true;
     $('send-stop-btn').disabled = false;
     $('send-badge').textContent = '配信中';
@@ -13446,10 +13725,11 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
   }
   function stopBroadcast() {
     send.broadcasting = false;
-    if (send.captureTimer) { clearTimeout(send.captureTimer); send.captureTimer = null; }
+    if (send.captureTimer) { clearInterval(send.captureTimer); send.captureTimer = null; }
     if (send.displayTimer) { clearInterval(send.displayTimer); send.displayTimer = null; }
     if (send.statsTimer) { clearInterval(send.statsTimer); send.statsTimer = null; }
     stopSendAudio();
+    if (send.videoEncoder) { try { send.videoEncoder.close(); } catch (e) { /* noop */ } send.videoEncoder = null; }
     send.videoChunks = [];
     var canvas = $('send-qr-canvas');
     canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
@@ -13478,7 +13758,7 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
     $('send-kbps').textContent = toSig(kbps, 3) + ' kbps';
     if (send.audioEnabled) {
       var akbps = computeThroughputKbps(send.audioBytesTimestamps);
-      $('send-audio-status').textContent = toSig(akbps, 3) + ' kbps(キュー' + send.audioQueue.length + ')';
+      $('send-audio-status').textContent = toSig(akbps, 3) + ' kbps(キュー' + send.audioQueue.length + ', ' + (send.audioMode === 'opus' ? 'Opus' : 'ADPCM') + ')';
     } else {
       $('send-audio-status').textContent = '無効';
     }
@@ -13496,10 +13776,14 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
   function applyVideoCallPreset() {
     function setVal(id, val, evtName) {
       var elx = $(id);
+      if (!elx) return;
       elx.value = String(val);
       elx.dispatchEvent(new Event(evtName, { bubbles: false }));
     }
+    setVal('send-codec-mode', 'auto', 'change');
     setVal('send-resolution', 320, 'change');
+    setVal('send-resolution-wc', 192, 'change');
+    setVal('send-video-bitrate', 320, 'input');
     setVal('send-jpeg-quality', 55, 'input');
     setVal('send-ec', 'M', 'change');
     setVal('send-format', 'auto', 'change');
@@ -13508,10 +13792,11 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
     setVal('send-diff-sensitivity', 'mid', 'change');
     setVal('send-rate', 20, 'input');
     setVal('send-stream-fps', 20, 'input');
-    setVal('send-audio-quality', 8000, 'change');
+    var audioSel = $('send-audio-quality');
+    if (audioSel.options.length >= 2) audioSel.value = audioSel.options[1].value;
     var audioBox = $('send-audio-enable');
     if (!audioBox.checked) { audioBox.checked = true; audioBox.dispatchEvent(new Event('change', { bubbles: false })); }
-    $('send-status').textContent = '動画通話プリセットを適用しました。実際の見え方は回線(光学)状況次第です。カメラを固定し明るい場所で試してください。';
+    $('send-status').textContent = '動画通話プリセットを適用しました(' + resolvedCodecMode() + 'モード)。実際の見え方は回線(光学)状況次第です。カメラを固定し明るい場所で試してください。';
   }
 
   /* ------------------------------------------------------------------ */
@@ -13520,9 +13805,11 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
   var recv = {
     stream: null, videoTrack: null,
     scanning: false, schedulerId: null, scheduler: null,
-    video: { activeKey: null, activeChunks: null, activeChunkCount: 0, activeDone: false, streamType: null },
+    video: { activeKey: null, activeChunks: null, activeChunkCount: 0, activeDone: false, streamType: null, activeFormat: null },
     audio: { activeFrameId: null, activeChunks: null, activeChunkCount: 0, activeDone: false },
     videoCanvasReady: false,
+    videoDecoder: null, videoDecoderTs: 0, videoDecoderBroken: false,
+    audioDecoder: null, audioDecoderSampleRate: 0, audioDecoderTs: 0,
     droppedFrames: 0, completedFrames: 0, corruptedFrames: 0,
     throughputSamples: [], frameTimestamps: [],
     scanCanvas: document.createElement('canvas'),
@@ -13536,7 +13823,7 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
   async function startRecvCamera() {
     if (recv.stream) return;
     recv.droppedFrames = 0; recv.completedFrames = 0; recv.corruptedFrames = 0;
-    recv.video = { activeKey: null, activeChunks: null, activeChunkCount: 0, activeDone: false, streamType: null };
+    recv.video = { activeKey: null, activeChunks: null, activeChunkCount: 0, activeDone: false, streamType: null, activeFormat: null };
     recv.audio = { activeFrameId: null, activeChunks: null, activeChunkCount: 0, activeDone: false };
     recv.videoCanvasReady = false;
     recv.throughputSamples = []; recv.frameTimestamps = [];
@@ -13572,6 +13859,8 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
     var video = $('recv-video'); if (video) video.srcObject = null;
     var overlay = $('recv-overlay'); if (overlay) overlay.getContext('2d').clearRect(0, 0, overlay.width, overlay.height);
     resetExposureUI('recv');
+    if (recv.videoDecoder) { try { recv.videoDecoder.close(); } catch (e) { /* noop */ } recv.videoDecoder = null; }
+    if (recv.audioDecoder) { try { recv.audioDecoder.close(); } catch (e) { /* noop */ } recv.audioDecoder = null; }
     teardownRecvAudioContext();
     $('recv-start-btn').disabled = false;
     $('recv-stop-btn').disabled = true;
@@ -13668,6 +13957,35 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
     updateProgressUI();
   }
 
+  /* ---- 本格コーデック(VP8)のデコード ----
+     キーフレームが来るたびにデコーダを作り直す(=キーフレーム到着が「安全な再同期点」
+     になる)。差分フレームは直前のキーフレームで判明したフォーマットを覚えておいて
+     解釈する(差分チャンク自体にはフォーマット情報を持たせていないため)。 */
+  function ensureVideoDecoder(codedWidth, codedHeight, description) {
+    if (recv.videoDecoder) { try { recv.videoDecoder.close(); } catch (e) { /* noop */ } }
+    var decoder = new VideoDecoder({
+      output: function (frame) { drawDecodedVideoFrame(frame); frame.close(); },
+      error: function (e) { console.error('VideoDecoder error:', e); recv.videoDecoderBroken = true; }
+    });
+    var config = { codec: 'vp8', codedWidth: codedWidth, codedHeight: codedHeight };
+    if (description && description.length) config.description = description;
+    decoder.configure(config);
+    recv.videoDecoder = decoder;
+    recv.videoDecoderTs = 0;
+    recv.videoDecoderBroken = false;
+    return decoder;
+  }
+  function drawDecodedVideoFrame(frame) {
+    var canvas = $('recv-output-canvas');
+    if (canvas.width !== frame.displayWidth || canvas.height !== frame.displayHeight) {
+      canvas.width = frame.displayWidth; canvas.height = frame.displayHeight;
+    }
+    canvas.getContext('2d').drawImage(frame, 0, 0, canvas.width, canvas.height);
+    recv.completedFrames++;
+    recv.frameTimestamps.push(performance.now());
+    $('recv-completed').textContent = String(recv.completedFrames);
+  }
+
   function finalizeVideoItem(st) {
     var parts = [];
     for (var i = 0; i < st.activeChunkCount; i++) { var p = st.activeChunks.get(i); if (!p) return false; parts.push(p); }
@@ -13675,12 +13993,41 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
     if (st.streamType === P.STREAM_VIDEO_KEY) {
       var kf = VC.unpackKeyframe(merged);
       if (!kf) { reportCorruptedFrame('キーフレームのヘッダが不正でした'); return true; }
-      renderKeyframe(kf);
+      recv.video.activeFormat = kf.format;
+      if (kf.format === VC.FORMAT_CODEC) {
+        $('recv-video-codec').textContent = 'VP8';
+        if (typeof VideoDecoder === 'undefined') { reportCorruptedFrame('このブラウザはVP8デコードに対応していません'); return true; }
+        try {
+          ensureVideoDecoder(kf.width, kf.height, kf.description.length ? kf.description : undefined);
+          recv.videoDecoderTs += 33333;
+          recv.videoDecoder.decode(new EncodedVideoChunk({ type: 'key', timestamp: recv.videoDecoderTs, data: kf.codecBytes }));
+          recv.videoCanvasReady = true;
+          $('recv-frame-kind').textContent = 'キーフレーム(VP8, ' + kf.width + '×' + kf.height + ')';
+        } catch (e) {
+          reportCorruptedFrame('VP8キーフレームのデコードに失敗しました');
+        }
+      } else {
+        $('recv-video-codec').textContent = kf.format === VC.FORMAT_WEBP ? 'WebP' : 'JPEG';
+        renderKeyframe(kf);
+      }
     } else {
       if (!recv.videoCanvasReady) { $('recv-status').textContent = 'キーフレーム受信待ちです(差分フレームを1つ破棄しました)。'; return true; }
-      var df = VC.unpackDelta(merged);
-      if (!df) { reportCorruptedFrame('差分フレームのヘッダが不正でした'); return true; }
-      renderDelta(df);
+      if (recv.video.activeFormat === VC.FORMAT_CODEC) {
+        if (!recv.videoDecoder || recv.videoDecoderBroken) { $('recv-status').textContent = 'キーフレーム受信待ちです(コーデック未初期化)。'; return true; }
+        try {
+          recv.videoDecoderTs += 33333;
+          recv.videoDecoder.decode(new EncodedVideoChunk({ type: 'delta', timestamp: recv.videoDecoderTs, data: merged }));
+          $('recv-frame-kind').textContent = '差分(VP8)';
+        } catch (e) {
+          reportCorruptedFrame('VP8差分フレームのデコードに失敗しました(次のキーフレームを待ちます)');
+          recv.videoDecoderBroken = true;
+          recv.videoCanvasReady = false; // 次のキーフレームが来るまで差分は無視する
+        }
+      } else {
+        var df = VC.unpackDelta(merged);
+        if (!df) { reportCorruptedFrame('差分フレームのヘッダが不正でした'); return true; }
+        renderDelta(df);
+      }
     }
     return true;
   }
@@ -13725,7 +14072,9 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
     }).catch(function () { reportCorruptedFrame('差分フレーム画像を読み込めませんでした'); });
   }
 
-  /* ---- 音声受信・再生 ---- */
+  /* ---- 音声受信・再生 ----
+     チャンク先頭のコーデック識別バイトを見て、Opus(WebCodecs)かADPCMかを
+     送信側の設定に関わらず自動判別する。 */
   function handleAudioChunk(chunk) {
     var st = recv.audio;
     if (chunk.frameId !== st.activeFrameId || chunk.chunkCount !== st.activeChunkCount) {
@@ -13743,19 +14092,55 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
       }
     }
   }
+  function ensureAudioDecoder(sampleRate, description) {
+    if (recv.audioDecoder) { try { recv.audioDecoder.close(); } catch (e) { /* noop */ } }
+    var decoder = new AudioDecoder({
+      output: function (audioData) { playDecodedAudioData(audioData); audioData.close(); },
+      error: function (e) { console.error('AudioDecoder error:', e); }
+    });
+    var config = { codec: 'opus', sampleRate: sampleRate, numberOfChannels: 1 };
+    if (description && description.length) config.description = description;
+    decoder.configure(config);
+    recv.audioDecoder = decoder;
+    recv.audioDecoderSampleRate = sampleRate;
+    recv.audioDecoderTs = 0;
+    return decoder;
+  }
+  function playDecodedAudioData(audioData) {
+    if (!recv.audioCtx || !$('recv-audio-playback').checked) return;
+    if (recv.audioCtx.state === 'suspended') recv.audioCtx.resume();
+    var numFrames = audioData.numberOfFrames;
+    var floatData = new Float32Array(numFrames);
+    try { audioData.copyTo(floatData, { planeIndex: 0 }); } catch (e) { return; }
+    var buffer = recv.audioCtx.createBuffer(1, numFrames, audioData.sampleRate);
+    if (buffer.copyToChannel) buffer.copyToChannel(floatData, 0); else buffer.getChannelData(0).set(floatData);
+    schedulePlayback(buffer);
+  }
   function finalizeAudioItem(st) {
     var parts = [];
     for (var i = 0; i < st.activeChunkCount; i++) { var p = st.activeChunks.get(i); if (!p) return; parts.push(p); }
     var merged = P.concatArrays(parts);
-    if (merged.length < 5) return;
-    var rateCode = merged[0];
-    var rateHz = AUDIO_RATE_CODES[rateCode] || 4000;
-    var adpcmBytes = merged.slice(1);
-    var samples;
-    try { samples = ADPCM.decodeChunk(adpcmBytes); } catch (e) { return; }
+    var parsed = VC.unpackAudioPayload(merged);
+    if (!parsed) return;
     recv.audioChunksReceived++;
     recv.audioChunkTimestamps.push(performance.now());
-    playAudioChunk(samples, rateHz);
+    if (parsed.codec === VC.AUDIO_CODEC_OPUS) {
+      $('recv-audio-codec').textContent = 'Opus';
+      if (typeof AudioDecoder === 'undefined') return; // このブラウザはOpusデコードに未対応
+      try {
+        if (!recv.audioDecoder || recv.audioDecoderSampleRate !== parsed.sampleRate) {
+          ensureAudioDecoder(parsed.sampleRate, parsed.description.length ? parsed.description : undefined);
+        }
+        recv.audioDecoderTs += 20000;
+        recv.audioDecoder.decode(new EncodedAudioChunk({ type: 'key', timestamp: recv.audioDecoderTs, data: parsed.opusBytes }));
+      } catch (e) { /* このチャンクは諦めて継続する */ }
+    } else {
+      $('recv-audio-codec').textContent = 'ADPCM';
+      var rateHz = AUDIO_RATE_CODES[parsed.rateCode] || 4000;
+      var samples;
+      try { samples = ADPCM.decodeChunk(parsed.adpcmBytes); } catch (e) { return; }
+      playAudioChunk(samples, rateHz);
+    }
   }
   function playAudioChunk(samples, rateHz) {
     if (!recv.audioCtx || !$('recv-audio-playback').checked) return;
@@ -13764,6 +14149,9 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
     for (var i = 0; i < samples.length; i++) floatData[i] = samples[i] / 32768;
     var buffer = recv.audioCtx.createBuffer(1, floatData.length, rateHz);
     if (buffer.copyToChannel) buffer.copyToChannel(floatData, 0); else buffer.getChannelData(0).set(floatData);
+    schedulePlayback(buffer);
+  }
+  function schedulePlayback(buffer) {
     var src = recv.audioCtx.createBufferSource();
     src.buffer = buffer;
     src.connect(recv.audioGain);
@@ -13786,6 +14174,8 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
     $('recv-chunk-progress').textContent = '-';
     $('recv-frame-kind').textContent = '-';
     $('recv-audio-status').textContent = '-';
+    $('recv-video-codec').textContent = '-';
+    $('recv-audio-codec').textContent = '-';
   }
   function refreshRecvRateStats() {
     var fps = computeFps(recv.frameTimestamps);
@@ -13813,7 +14203,13 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
       $('send-rate-value').textContent = $('send-rate').value + ' fps';
       if (send.displayTimer) { clearInterval(send.displayTimer); send.displayTimer = setInterval(displayTick, rateIntervalMs()); }
     });
-    $('send-stream-fps').addEventListener('input', function () { $('send-stream-fps-value').textContent = $('send-stream-fps').value + ' fps'; });
+    $('send-stream-fps').addEventListener('input', function () {
+      $('send-stream-fps-value').textContent = $('send-stream-fps').value + ' fps';
+      if (send.captureTimer) { clearInterval(send.captureTimer); send.captureTimer = setInterval(captureFrame, streamFpsIntervalMs()); }
+    });
+    $('send-video-bitrate').addEventListener('input', function () { $('send-video-bitrate-value').textContent = this.value + ' kbps'; });
+    $('send-codec-mode').addEventListener('change', updateCodecModeUI);
+    updateCodecModeUI();
     $('send-jpeg-quality').addEventListener('input', function () { $('send-jpeg-quality-value').textContent = $('send-jpeg-quality').value + '%'; });
     $('send-mirror').addEventListener('change', function () { $('send-video').style.transform = this.checked ? 'scaleX(-1)' : 'none'; });
     $('send-audio-enable').addEventListener('change', function () {
