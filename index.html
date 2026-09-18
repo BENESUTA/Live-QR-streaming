@@ -291,8 +291,8 @@
         <div class="cam-hint" style="margin-top:4px;">0=自動(データ量に応じて必要最小のバージョンを選択)。1〜40を指定すると、そのバージョンの容量に収まるようチャンクサイズが調整されます。</div>
       </div>
       <div class="field">
-        <label>ストリーミングfps(新しい映像フレームを取り込む頻度): <span id="send-stream-fps-value" class="slider-value">5 fps</span></label>
-        <input type="range" id="send-stream-fps" min="1" max="30" step="1" value="5">
+        <label>ストリーミングfps(新しい映像フレームを取り込む頻度): <span id="send-stream-fps-value" class="slider-value">15 fps</span></label>
+        <input type="range" id="send-stream-fps" min="1" max="30" step="1" value="15">
         <div class="cam-hint" style="margin-top:4px;">チャンク数が多い場合や音声が有効な場合は、実際の更新間隔がこの値より長くなることがあります。</div>
       </div>
       <div class="field" style="margin-top:10px;">
@@ -13458,7 +13458,10 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
      JPEG/WebPのような静止画の使い回しではなく、実際に動き補償を伴うフレーム間
      圧縮を行うVP8エンコーダにそのまま映像フレームを渡す。差分検出やキーフレーム
      間隔の管理はコーデック自身が内部で行うため、こちら側では不要になる。 */
-  function ensureVideoEncoder(width, height, bitrateBps, fps) {
+  var ENCODER_FRAMERATE_HINT = 30; // configure()に渡す「想定fps」。実際の投入頻度は
+  // 自前のタイマー(streamFpsIntervalMs)だけで制御し、エンコーダ側の内部レート制御が
+  // 低いfpsに引きずられて頭打ちにならないよう、常に高め・固定値で申告しておく。
+  function ensureVideoEncoder(width, height, bitrateBps) {
     if (send.videoEncoder && send.videoEncoderWidth === width && send.videoEncoderHeight === height && send.videoEncoderBitrate === bitrateBps) {
       return send.videoEncoder;
     }
@@ -13467,7 +13470,7 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
       output: handleEncodedVideoChunk,
       error: function (e) { console.error('VideoEncoder error:', e); }
     });
-    encoder.configure({ codec: 'vp8', width: width, height: height, bitrate: bitrateBps, framerate: fps, latencyMode: 'realtime' });
+    encoder.configure({ codec: 'vp8', width: width, height: height, bitrate: bitrateBps, framerate: ENCODER_FRAMERATE_HINT, latencyMode: 'realtime' });
     send.videoEncoder = encoder;
     send.videoEncoderWidth = width; send.videoEncoderHeight = height; send.videoEncoderBitrate = bitrateBps;
     send.videoEncoderTs = 0;
@@ -13514,7 +13517,7 @@ window.ZXING_READER_WASM_BASE64 = "AGFzbQEAAAAByQRCYAN/f38Bf2ABfwBgAn9/AGACf38Bf
     cv.getContext('2d').drawImage(video, 0, 0, w, h);
 
     var fps = parseInt($('send-stream-fps').value, 10) || 10;
-    var encoder = ensureVideoEncoder(w, h, q.videoBitrateBps, fps);
+    var encoder = ensureVideoEncoder(w, h, q.videoBitrateBps);
     if (encoder.encodeQueueSize > 2) return; // エンコーダが詰まっている: このタイミングは諦めて遅延蓄積を防ぐ
     send.videoEncoderTs += Math.round(1e6 / fps);
     try {
